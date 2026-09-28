@@ -33,6 +33,9 @@ dependencies = [
     "transformers",
     "accelerate",
     "scipy",
+
+    #Local LLM (OpenAI-compatible API client for Ollama / LM Studio)
+    "openai>=2.1",
 ]
 
 [project.optional-dependencies]
