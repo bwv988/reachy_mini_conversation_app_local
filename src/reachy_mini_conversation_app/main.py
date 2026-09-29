@@ -28,6 +28,11 @@ def update_chatbot(chatbot: List[Dict[str, Any]], response: Dict[str, Any]) -> L
     return chatbot
 
 
+# Slow edge devices (e.g. the robot's CM4) can need more than the SDK's
+# default 5s to complete the daemon handshake.
+ROBOT_CONNECTION_TIMEOUT_S: float = 30.0
+
+
 def main() -> None:
     """Entrypoint for the Reachy Mini conversation app."""
     args, _ = parse_args()
@@ -70,13 +75,13 @@ def run(
 
         if args.wireless_version and not args.on_device:
             logger.info("Using WebRTC backend for fully remote wireless version")
-            robot = ReachyMini(media_backend="webrtc", localhost_only=False)
+            robot = ReachyMini(media_backend="webrtc", localhost_only=False, timeout=ROBOT_CONNECTION_TIMEOUT_S)
         elif args.wireless_version and args.on_device:
             logger.info("Using GStreamer backend for on-device wireless version")
-            robot = ReachyMini(media_backend="gstreamer")
+            robot = ReachyMini(media_backend="gstreamer", timeout=ROBOT_CONNECTION_TIMEOUT_S)
         else:
             logger.info("Using default backend for lite version")
-            robot = ReachyMini(media_backend="default")
+            robot = ReachyMini(media_backend="default", timeout=ROBOT_CONNECTION_TIMEOUT_S)
 
     # Check if running in simulation mode without --gradio
     if robot.client.get_status()["simulation_enabled"] and not args.gradio:
