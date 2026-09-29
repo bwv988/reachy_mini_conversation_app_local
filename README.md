@@ -51,6 +51,19 @@ ollama pull phi-3-mini-4k-instruct
 - Load a GGUF model (e.g., Phi-3-mini)
 - Start local server on port 1234
 
+**Or any OpenAI-compatible server (llama.cpp, vLLM, ...):**
+```bash
+llama-server -m model.gguf --host 0.0.0.0 --port 8080
+```
+Then in `.env`, use the generic OpenAI-compatible slot:
+`LLM_PROVIDER=lmstudio`, `LMSTUDIO_ENDPOINT=http://<host>:8080/v1`,
+`LMSTUDIO_MODEL=<name from /v1/models>`.
+
+> [!TIP]
+> For Qwen3 and other "thinking" models, keep `LLM_DISABLE_THINKING=true`
+> (the default): the hidden reasoning preamble would otherwise consume the
+> token budget and leave the spoken answer empty.
+
 ### 3. Configure
 
 ```bash
@@ -63,17 +76,80 @@ nano .env
 
 ### 4. Run
 
-**Console mode (headless):**
+The app talks to a **Reachy Mini daemon**. Start the daemon for your setup
+first, then the app.
+
+#### Simulator (no robot needed)
+
+The simulator uses the MuJoCo physics backend, which on macOS must run under
+`mjpython` (MuJoCo's launcher):
+
 ```bash
+# Terminal A — simulator daemon (opens the robot viewer window)
+.venv/bin/mjpython -m reachy_mini.daemon.app.main --sim
+# wait for: "Uvicorn running on http://0.0.0.0:8000"
+
+# Terminal B — conversation app (--gradio is required in simulation)
+.venv/bin/reachy-mini-conversation-app --gradio --no-camera
+
+# Terminal C — browser (allow microphone access, then talk)
+open http://localhost:7860
+```
+
+> [!NOTE]
+> - The simulator needs the SDK's MuJoCo extra:
+>   `uv pip install "reachy_mini[mujoco]"` (or `pip install "reachy_mini[mujoco]"`).
+> - With uv-managed Pythons on macOS, `mjpython` may fail to load
+>   `libpython3.12.dylib`. Fix by symlinking it into the venv:
+>   `ln -sf ~/.local/share/uv/python/<your-python>/lib/libpython3.12.dylib .venv/libpython3.12.dylib`
+
+#### Real robot (wired kit, USB)
+
+1. Power the robot **fully on** (standby is not enough) and connect it to the
+   machine with a USB cable.
+2. Close the Reachy desktop app if it is running — it holds the serial port.
+3. Start the daemon (no `--sim`; it auto-detects the USB serial port):
+
+```bash
+# Terminal A
+reachy-mini-daemon
+# wait for: "Uvicorn running on http://0.0.0.0:8000"
+
+# Terminal B (audio flows through the robot's own mic/speaker)
 reachy-mini-conversation-app
+# add --gradio for the web UI / personality editor
 ```
 
-**Web UI mode (required for simulator):**
+If several serial devices are connected, pick one explicitly:
+`reachy-mini-daemon --serialport /dev/tty.usbmodem*`.
+
+#### Real robot (wireless kit)
+
+The wireless daemon must run **on the robot's Raspberry Pi** (it drives the
+motors over the RPi UART). On the robot:
+
 ```bash
-reachy-mini-conversation-app --gradio
+reachy-mini-daemon --wireless-version
 ```
 
-Access at `http://localhost:7860`
+Then, from your computer on the same network:
+
+```bash
+reachy-mini-conversation-app --wireless-version
+```
+
+#### Preflight checks
+
+Before heavy initialization the app verifies the daemon is reachable and
+prints an actionable checklist (power, USB, closed desktop app, wireless
+mode). You can also check manually:
+
+```bash
+# daemon (local modes)
+curl -s http://localhost:8000/ > /dev/null && echo "daemon OK"
+# LLM server
+curl -s http://localhost:11434/v1/models   # or your LLM endpoint
+```
 
 ## Configuration
 
@@ -163,6 +239,14 @@ See `profiles/example/` for reference.
 # Start the Reachy Mini daemon first
 # See: https://github.com/pollen-robotics/reachy_mini/
 ```
+
+**RuntimeError: No Reachy Mini serial port found:**
+- The robot is in standby — power it fully on
+- No USB cable between robot and host (a host daemon cannot drive the robot
+  over WiFi alone; for the wireless kit the daemon runs on the robot's RPi,
+  see Quick Start)
+- The Reachy desktop app is running and holding the serial port — close it
+- Multiple serial devices connected — pick one with `--serialport`
 
 **No audio output:**
 - Check TTS voice is valid: `af_sarah`, `am_michael`, `bf_emma`, `bm_lewis`
