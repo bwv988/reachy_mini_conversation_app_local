@@ -1,5 +1,9 @@
 # Reachy Mini Conversation App — Agent Guide
 
+> **Before starting work in a new session: read [DEVELOPER_LOG.md](DEVELOPER_LOG.md).**
+> It records the environment (fork/branch, robot + GB10 details, SDK versions), what has
+> already been done, what remains, and gotchas learned the hard way.
+
 This is a fully local, on-robot **Python app** for Reachy Mini (speech-to-text, local LLM, TTS, and choreographed motion). It is exactly the kind of "developer tool / on-robot control loop / offline LAN" app for which the upstream [pollen-robotics/reachy_mini AGENTS.md](https://github.com/pollen-robotics/reachy_mini/blob/main/AGENTS.md) recommends the **Python path** over a JS/web app. Read that file for the full Reachy Mini SDK and app-development conventions; this file only covers what's specific to this repo.
 
 ## Quick orientation
