@@ -52,6 +52,11 @@ class Config:
     LMSTUDIO_ENDPOINT = os.getenv("LMSTUDIO_ENDPOINT", "http://localhost:1234/v1")
     LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "")
 
+    # Disable "thinking" mode on reasoning models (Qwen3 & co): the hidden
+    # reasoning preamble would otherwise consume the whole token budget and
+    # leave the spoken answer empty. Set LLM_DISABLE_THINKING=false to keep it.
+    LLM_DISABLE_THINKING = os.getenv("LLM_DISABLE_THINKING", "true").lower().strip() in ("true", "1", "yes")
+
     # Ollama configuration (recommended for Jetson)
     OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/v1")
     # Default to phi-3-mini for Jetson (3.8B params, ~2GB RAM)

@@ -525,11 +525,17 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             logger.debug("Calling local LLM with %d messages", len(messages))
 
             # Call local LLM (no tool support - using base instruct model)
+            create_kwargs: dict[str, Any] = {}
+            if config.LLM_DISABLE_THINKING:
+                # llama.cpp: keep Qwen3-style thinking out of the token budget
+                # (unknown templates ignore the kwarg, so this is safe to always send)
+                create_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
             response = await self._local_llm_client.chat.completions.create(
                 model=self._local_llm_model,
                 messages=messages,
                 max_tokens=512,
                 temperature=0.7,
+                **create_kwargs,
             )
 
             choice = response.choices[0]
