@@ -17,6 +17,7 @@ from reachy_mini import ReachyMini, ReachyMiniApp
 from reachy_mini_conversation_app.utils import (
     parse_args,
     setup_logger,
+    preflight_check,
     handle_vision_stuff,
 )
 
@@ -53,6 +54,10 @@ def run(
 
     if args.no_camera and args.head_tracker is not None:
         logger.warning("Head tracking is not activated due to --no-camera.")
+
+    # Verify the robot daemon is reachable before doing any heavy initialization
+    if robot is None and not preflight_check(args, logger):
+        sys.exit(1)
 
     if robot is None:
         # Initialize robot with appropriate backend
