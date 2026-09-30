@@ -21,11 +21,6 @@ class Config:
     """Configuration class for the conversation app."""
 
     # =========================================================================
-    # FULL LOCAL MODE (ALWAYS ENABLED - No cloud dependencies)
-    # =========================================================================
-    FULL_LOCAL_MODE = True  # Hardcoded for fully local operation
-
-    # =========================================================================
     # JETSON OPTIMIZATION
     # =========================================================================
     JETSON_OPTIMIZE = os.getenv("JETSON_OPTIMIZE", "true").lower().strip() in ("true", "1", "yes")
@@ -109,23 +104,14 @@ class Config:
     # =========================================================================
     # LOCAL VAD CONFIGURATION (Voice Activity Detection)
     # =========================================================================
-    # VAD is built-in (energy-based). External endpoint is optional.
+    # VAD is built-in (energy-based).
     VAD_ENERGY_THRESHOLD = float(os.getenv("VAD_ENERGY_THRESHOLD", "0.01"))
     VAD_SILENCE_DURATION = float(os.getenv("VAD_SILENCE_DURATION", "0.8"))
     VAD_MIN_SPEECH_DURATION = float(os.getenv("VAD_MIN_SPEECH_DURATION", "0.3"))
 
-    # External VAD endpoint (optional - for smart turn detection)
-    LOCAL_VAD_ENDPOINT = os.getenv("LOCAL_VAD_ENDPOINT")  # e.g., "http://192.168.68.74:7863"
-    if LOCAL_VAD_ENDPOINT:
-        logger.info(f"External VAD enabled at {LOCAL_VAD_ENDPOINT}")
-
-    # =========================================================================
-    # ONNX RUNTIME OPTIMIZATION (for Jetson)
-    # =========================================================================
-    ONNX_PROVIDERS = os.getenv(
-        "ONNX_PROVIDERS",
-        "CUDAExecutionProvider,CPUExecutionProvider" if JETSON_OPTIMIZE else "CPUExecutionProvider"
-    )
+    # Seconds to keep the mic muted after the robot's speech has finished playing,
+    # so the tail of its own voice (and speaker/room latency) isn't heard as the user.
+    MIC_UNMUTE_DELAY = float(os.getenv("MIC_UNMUTE_DELAY", "0.6"))
 
     # =========================================================================
     # SYSTEM STATUS LOGGING

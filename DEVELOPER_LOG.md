@@ -30,13 +30,24 @@ talking on the real (wireless) robot.
 8. `f9a02c0` — 30 s timeout for the robot daemon handshake (SDK default 5 s is too tight on the CM4)
 9. `82078c9` — Tolerate `DaemonStatus` object from `client.get_status()` (SDK 1.9+ no longer returns a dict)
 
+## Session 2026-09-30 (cleanup before robot testing)
+
+Changes (see git log on `reachy_tests` for the commit):
+
+- **Deps:** `reachy_mini~=1.10.0` (match the robot daemon), `gradio==5.23.1` (the only gradio that works with reachy_mini 1.10's pydantic>=2.12.5 *and* fastrtc's gradio<6), `requires-python>=3.11`, `fastrtc[tts]` (kokoro-onnx was never declared, so Kokoro TTS couldn't load from a clean install). Knock-on: huggingface-hub 1.x, transformers 5.x. The Mac venv is now synced to SDK 1.10.0 (`uv sync --inexact` keeps the manually installed MuJoCo extra).
+- **ASR:** resample to 16 kHz with scipy before Whisper. The transformers pipeline otherwise needs torchaudio, which isn't installed.
+- **OpenAI key removed everywhere.** Console mode used to crash on `config.OPENAI_API_KEY` (an attribute that doesn't exist); it also tried to claim a key from a HuggingFace Space and could block forever waiting for one. Gradio telemetry is now off by default (`GRADIO_ANALYTICS_ENABLED=False`).
+- **Half-duplex mic mute:** mic input is ignored from the end of an utterance until TTS playback finishes plus `MIC_UNMUTE_DELAY` (default 0.6 s), so the robot doesn't answer itself.
+- **Dead code removed:** OpenAI realtime session, Chatterbox TTS, external Gradio ASR, external smart-turn VAD (`LOCAL_VAD_ENDPOINT`, `vad_server_layout.md`), `FULL_LOCAL_MODE`, `ONNX_PROVIDERS`. `openai_realtime.py` went from 1428 to ~300 lines; the class name is kept.
+- **Verified on the Mac:** 14 tests pass, ruff clean, Kokoro→Whisper round trip, and the app in `--gradio` mode against the 1.10.0 sim daemon (UI served). **Not verified:** a GB10 LLM call (connection refused from the Mac during this session) and console mode on real hardware.
+
 ### What is left to do
 
-1. **Finish the robot bring-up (where we stopped):** on the robot, `cd ~/reachy_mini_conversation_app_local && git pull` (last launch raced the pull and ran pre-fix code) then relaunch: `/venvs/apps_venv/bin/reachy-mini-conversation-app --no-camera`. Next expected failure points: `robot.media` API usage in `console.py`/shutdown paths on SDK 1.10.0 — check the log, patch, repeat.
-2. **First real conversation test** on the robot (mic/speaker via GStreamer `.asoundrc`); then try camera (`media.get_frame()` in `camera_worker.py` unverified on 1.10.0).
-3. **Pin/resolve the SDK version skew**: pip resolved `reachy_mini` 1.8.0 for the app install; we force-aligned the robot venv to 1.10.0. Decide: pin `reachy_mini` in `pyproject.toml` or document "match the robot's daemon version".
-4. **Housekeeping debt** (known, not started): 29 pre-existing ruff errors in `local_audio.py`/`openai_realtime.py` (CI lint fails); `gradio==5.50.1.dev1` dev-pin causes a pydantic conflict warning with reachy_mini 1.10.0; `docs/scheme.mmd` + README "OPENAI API Key" UI are stale cloud-era artifacts; local LLM path is non-streaming (full-reply latency) and has no tool calling (dance/emotion tools dead on the local path).
-5. **Optional later (Path 2):** run the app on the Mac against the robot over WiFi — SDK 1.10 has `connection_mode="network"`/auto-detect + mDNS (`reachy-mini.local`); the Mac's venv still has SDK 1.2.3rc1 and would need upgrading to match.
+1. **Robot bring-up:** on the robot, `git pull`, then reinstall so the new deps land: `/venvs/apps_venv/bin/pip install -e .` (expect transformers 5 / hf-hub 1.x / kokoro-onnx; keep CPU-only torch; watch the ~3 GB free disk). Then `/venvs/apps_venv/bin/reachy-mini-conversation-app --no-camera`. The OpenAI-key crash is fixed, so the next failure points are `robot.media` on 1.10.0 and model download/RAM on the CM4.
+2. **First real conversation test** (mic/speaker via GStreamer `.asoundrc`). Tune `VAD_ENERGY_THRESHOLD` against fan/motor noise and `MIC_UNMUTE_DELAY` if the robot still hears itself. Then try the camera (`media.get_frame()` in `camera_worker.py` is unverified on 1.10.0).
+3. **Latency:** the reply isn't streamed and `max_tokens=512` at ~4 tok/s. Stream the LLM and speak sentence by sentence, lower `max_tokens`, and set an explicit client timeout.
+4. **Remaining debt:** no tool calling on the local path (dance/emotion tools are unused; `core_tools.get_tool_specs`/`dispatch_tool_call` are kept for it). The personality UIs still offer OpenAI voice names and write `voice.txt`, which nothing reads (could map to `KOKORO_VOICE`). No barge-in (interrupting the robot). `docs/scheme.mmd` is stale. Consider renaming `OpenaiRealtimeHandler`/`openai_realtime.py`. 10 mypy errors remain (none are new kinds).
+5. **Optional later (Path 2):** run the app on the Mac against the robot over WiFi. SDK 1.10 has `connection_mode="network"`/auto-detect + mDNS (`reachy-mini.local`); the Mac venv is now on 1.10.0 too.
 
 ### Gotchas learned (don't rediscover)
 

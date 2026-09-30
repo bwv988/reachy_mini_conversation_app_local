@@ -6,22 +6,22 @@ This module provides built-in local alternatives to cloud services:
 - TTS: Kokoro-82M for text-to-speech (lightweight, edge-optimized)
 """
 
-import io
 import re
-import wave
 import asyncio
 import logging
-import tempfile
-from pathlib import Path
+from math import gcd
 from typing import Optional
 
 import numpy as np
+from scipy.signal import resample_poly
 
 
 logger = logging.getLogger(__name__)
 
 # Default sample rate for audio output
 DEFAULT_SAMPLE_RATE = 24000
+# Sample rate Whisper models are trained on
+WHISPER_SAMPLE_RATE = 16000
 
 
 def clean_text_for_speech(text: str) -> str:
@@ -32,6 +32,7 @@ def clean_text_for_speech(text: str) -> str:
 
     Returns:
         Cleaned text suitable for speech synthesis
+
     """
     # Remove content in parentheses like (Pauses, then softly)
     text = re.sub(r'\([^)]*\)', '', text)
@@ -77,6 +78,7 @@ class LocalVAD:
             silence_duration: Seconds of silence before considering speech ended
             min_speech_duration: Minimum seconds of speech to be valid
             sample_rate: Audio sample rate in Hz
+
         """
         self.energy_threshold = energy_threshold
         self.silence_duration = silence_duration
@@ -104,6 +106,7 @@ class LocalVAD:
 
         Returns:
             Tuple of (speech_started, speech_ended)
+
         """
         # Calculate frame duration
         frame_duration = len(audio_frame) / self.sample_rate
@@ -163,6 +166,7 @@ class LocalASR:
             device: Device to use (auto, cpu, cuda)
             dtype: Data type (auto, float16, float32)
             language: Language code for transcription
+
         """
         self.model_name = model_name
         self.device = device
@@ -223,6 +227,7 @@ class LocalASR:
 
         Returns:
             Transcribed text or None if failed
+
         """
         if not self._ensure_initialized():
             return None
@@ -246,8 +251,14 @@ class LocalASR:
     def _transcribe_array(self, sample_rate: int, audio_array: np.ndarray) -> Optional[str]:
         """Transcribe an audio array (runs in executor)."""
         try:
-            # Call distil-whisper's stt method with (sample_rate, audio_data) tuple
-            text = self._model.stt((sample_rate, audio_array))
+            # Whisper expects 16 kHz. Resample here: the transformers pipeline would
+            # otherwise need torchaudio to do it.
+            audio = audio_array.astype(np.float32) / 32768.0 if audio_array.dtype == np.int16 else audio_array
+            if sample_rate != WHISPER_SAMPLE_RATE:
+                g = gcd(sample_rate, WHISPER_SAMPLE_RATE)
+                audio = resample_poly(audio, WHISPER_SAMPLE_RATE // g, sample_rate // g).astype(np.float32)
+
+            text = self._model.stt((WHISPER_SAMPLE_RATE, audio))
 
             if text and text.strip():
                 text = text.strip()
@@ -280,6 +291,7 @@ class LocalTTS:
             output_sample_rate: Target sample rate for output audio
             voice: Voice to use (af_sarah, am_michael, bf_emma, etc.)
             speed: Speech speed multiplier (0.5-2.0)
+
         """
         self.output_sample_rate = output_sample_rate
         self.voice = voice
@@ -320,6 +332,7 @@ class LocalTTS:
 
         Returns:
             Audio samples as int16 numpy array, or None if failed
+
         """
         if not text or not text.strip():
             return None
@@ -345,7 +358,7 @@ class LocalTTS:
             return None
 
     def _synthesize_sync(self, text: str) -> Optional[np.ndarray]:
-        """Synchronous synthesis (runs in executor)."""
+        """Synthesize synchronously (runs in executor)."""
         try:
             from scipy.signal import resample
 
@@ -397,31 +410,3 @@ class LocalTTS:
         except Exception as e:
             logger.error("Kokoro TTS synthesis error: %s", e)
             return None
-
-
-# Convenience function to check local audio capabilities
-def check_local_audio_support() -> dict[str, bool]:
-    """Check which local audio components are available.
-
-    Returns:
-        Dict with availability status for each component
-    """
-    support = {
-        "vad": True,  # Built-in, always available
-        "asr_distil_whisper": False,
-        "tts_kokoro": False,
-    }
-
-    try:
-        from distil_whisper_fastrtc import DistilWhisperSTT
-        support["asr_distil_whisper"] = True
-    except ImportError:
-        pass
-
-    try:
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-        support["tts_kokoro"] = True
-    except ImportError:
-        pass
-
-    return support

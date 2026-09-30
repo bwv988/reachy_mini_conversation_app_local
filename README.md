@@ -1,4 +1,4 @@
-**# Reachy Mini Conversation App
+# Reachy Mini Conversation App
 
 **Fully local conversational AI for Reachy Mini robot** - combining lightweight speech recognition, text-to-speech, and local LLM with choreographed motion libraries.
 
@@ -17,6 +17,10 @@
 
 > [!IMPORTANT]
 > **Install Reachy Mini SDK first**: [github.com/pollen-robotics/reachy_mini](https://github.com/pollen-robotics/reachy_mini/)
+>
+> The app pins `reachy_mini~=1.10.0` to match the robot's daemon. The app's SDK
+> and the daemon should be on the same minor version: when the robot's daemon
+> is updated, bump the pin in `pyproject.toml` too. Requires Python 3.11+.
 >
 > Works with:
 > - **Real hardware** - Physical Reachy Mini robot
@@ -161,6 +165,8 @@ The app auto-configures for your hardware. Key settings in `.env`:
 | `OLLAMA_MODEL` | `phi-3-mini-4k-instruct` | Ollama model name |
 | `DISTIL_WHISPER_MODEL` | `distil-small.en` | Speech recognition model |
 | `KOKORO_VOICE` | `af_sarah` | TTS voice (af_sarah, am_michael, etc.) |
+| `VAD_ENERGY_THRESHOLD` | `0.01` | Mic loudness that counts as speech (raise it if fan/motor noise triggers turns) |
+| `MIC_UNMUTE_DELAY` | `0.6` | Seconds the mic stays muted after the robot stops speaking |
 | `JETSON_OPTIMIZE` | `true` | Enable Jetson-specific optimizations |
 
 See `.env.jetson` for Jetson Nano optimized settings.
@@ -248,6 +254,11 @@ See `profiles/example/` for reference.
 - The Reachy desktop app is running and holding the serial port — close it
 - Multiple serial devices connected — pick one with `--serialport`
 
+**The robot answers itself / talks in a loop:**
+- Turn-taking is half-duplex: the mic is ignored while a reply is generated
+  and while the robot speaks. If the tail of its voice still triggers a turn,
+  increase `MIC_UNMUTE_DELAY` (e.g. `1.0`) or `VAD_ENERGY_THRESHOLD`.
+
 **No audio output:**
 - Check TTS voice is valid: `af_sarah`, `am_michael`, `bf_emma`, `bm_lewis`
 - Verify Ollama/LM Studio is running: `curl http://localhost:11434` or `:1234`
@@ -293,5 +304,5 @@ Apache 2.0
 ---
 
 **Built for edge deployment** - Optimized for any hardware with 8GB+ RAM.
-**
-** Thanks to muellerzr for his fork **
+
+**Thanks to muellerzr for his fork.**
