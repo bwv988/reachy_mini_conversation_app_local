@@ -50,6 +50,7 @@ from reachy_mini.utils.interpolation import (
     compose_world_offset,
     linear_pose_interpolation,
 )
+from reachy_mini_conversation_app.config import config
 
 
 logger = logging.getLogger(__name__)
@@ -357,6 +358,15 @@ class MovementManager:
 
         return self._now() - last_activity >= self.idle_inactivity_delay
 
+    def is_playing_move(self) -> bool:
+        """Return True while a primary move (dance, emotion, goto) is playing or queued.
+
+        Idle breathing doesn't count. Used to keep the mic muted while the motors
+        are noisy. Reads single references/lengths only, so it's safe from other threads.
+        """
+        current = self.state.current_move
+        return (current is not None and not isinstance(current, BreathingMove)) or len(self.move_queue) > 0
+
     def set_listening(self, listening: bool) -> None:
         """Enable or disable listening mode without touching shared state directly.
 
@@ -490,9 +500,10 @@ class MovementManager:
                 logger.debug(f"Starting new move, duration: {self.state.current_move.duration}s")
 
     def _manage_breathing(self, current_time: float) -> None:
-        """Manage automatic breathing when idle."""
+        """Manage automatic breathing when idle (only if enabled via IDLE_BREATHING)."""
         if (
-            self.state.current_move is None
+            config.IDLE_BREATHING
+            and self.state.current_move is None
             and not self.move_queue
             and not self._is_listening
             and not self._breathing_active

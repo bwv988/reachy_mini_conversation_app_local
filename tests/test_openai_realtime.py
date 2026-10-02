@@ -13,9 +13,13 @@ SR = rt_mod.INPUT_SAMPLE_RATE
 FRAME = SR // 10  # 100 ms frames
 
 
-def _handler() -> rt_mod.OpenaiRealtimeHandler:
-    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
-    return rt_mod.OpenaiRealtimeHandler(deps)
+def _handler(models_ready: bool = True, camera_worker: object | None = None) -> rt_mod.OpenaiRealtimeHandler:
+    movement_manager = MagicMock()
+    movement_manager.is_playing_move.return_value = False
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=movement_manager, camera_worker=camera_worker)
+    handler = rt_mod.OpenaiRealtimeHandler(deps)
+    handler._models_ready = models_ready
+    return handler
 
 
 def _loud() -> tuple[int, np.ndarray]:
@@ -34,12 +38,16 @@ async def _speak(handler: rt_mod.OpenaiRealtimeHandler, loud_frames: int = 5, si
 
 
 @pytest.mark.asyncio
-async def test_start_up_runs_until_shutdown() -> None:
-    """start_up idles without any external connection and returns on shutdown."""
-    handler = _handler()
+async def test_start_up_runs_until_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """start_up preloads the models, unmutes the mic, idles, and returns on shutdown."""
+    handler = _handler(models_ready=False)
+    preload = AsyncMock()
+    monkeypatch.setattr(handler, "_preload_models", preload)
     task = asyncio.create_task(handler.start_up())
     await asyncio.sleep(0.05)
     assert not task.done()
+    preload.assert_awaited_once()
+    assert handler._models_ready
 
     await handler.shutdown()
     await asyncio.wait_for(task, timeout=5.0)
@@ -135,3 +143,37 @@ async def test_turn_flag_cleared_even_if_asr_fails(monkeypatch: pytest.MonkeyPat
     with pytest.raises(RuntimeError):
         await handler._process_local_speech(b"\x00\x00" * 100)
     assert not handler._turn_in_progress
+
+
+@pytest.mark.asyncio
+async def test_mic_muted_until_models_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Startup noise can't trigger a turn while the ASR/TTS models are still loading."""
+    handler = _handler(models_ready=False)
+    process = AsyncMock()
+    monkeypatch.setattr(handler, "_process_local_speech", process)
+
+    await _speak(handler)
+    await asyncio.sleep(0)
+    process.assert_not_called()
+
+    handler._models_ready = True
+    await _speak(handler)
+    await asyncio.sleep(0)
+    process.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_preload_runs_model_init_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model loading happens in worker threads, never on the event loop thread."""
+    import threading
+
+    handler = _handler(models_ready=False)
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    monkeypatch.setattr(handler._local_asr, "_ensure_initialized", lambda: seen.append(threading.get_ident()))
+    monkeypatch.setattr(handler._local_tts, "_ensure_initialized", lambda: seen.append(threading.get_ident()))
+
+    await handler._preload_models()
+
+    assert len(seen) == 2
+    assert loop_thread not in seen

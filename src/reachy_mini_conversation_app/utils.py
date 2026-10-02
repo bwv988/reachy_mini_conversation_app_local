@@ -38,6 +38,12 @@ def parse_args() -> Tuple[argparse.Namespace, list]:  # type: ignore
         action="store_true",
         help="Use when conversation app is running on the same device as Reachy Mini daemon",
     )
+    parser.add_argument(
+        "--robot-host",
+        default="reachy-mini.local",
+        help="Hostname or IP of the wireless robot's daemon, used with --wireless-version from another machine "
+        "(default: reachy-mini.local; use the IP if mDNS doesn't resolve)",
+    )
     return parser.parse_known_args()
 
 
@@ -101,12 +107,12 @@ def find_reachy_usb_ports() -> list[str]:
     ]
 
 
-def daemon_reachable(port: int = 8000, timeout: float = 1.0) -> bool:
-    """Check whether a local Reachy Mini daemon is serving HTTP."""
+def daemon_reachable(port: int = 8000, timeout: float = 1.0, host: str = "localhost") -> bool:
+    """Check whether a Reachy Mini daemon is serving HTTP on host:port."""
     import urllib.request
 
     try:
-        with urllib.request.urlopen(f"http://localhost:{port}/", timeout=timeout):
+        with urllib.request.urlopen(f"http://{host}:{port}/", timeout=timeout):
             return True
     except Exception:
         return False
@@ -120,19 +126,25 @@ def preflight_check(
 ) -> bool:
     """Verify the robot daemon is reachable and log actionable guidance if not.
 
-    In remote wireless mode the daemon runs on the robot's RPi, so no local
-    daemon is expected on this host.
+    In remote wireless mode the daemon runs on the robot's RPi, so it is
+    checked at ``args.robot_host`` instead of localhost.
 
     Returns:
         True if startup can proceed, False if the daemon is unreachable.
 
     """
     if args.wireless_version and not args.on_device:
-        logger.info(
-            "Wireless mode: expecting the daemon to run on the robot "
-            "(reachy-mini-daemon --wireless-version on the robot's RPi)."
+        host = args.robot_host
+        if daemon_reachable(port=daemon_port, host=host, timeout=5.0):
+            logger.info(f"Reachy Mini daemon reachable on {host}:{daemon_port}")
+            return True
+        logger.error(
+            f"Could not reach the robot's daemon at {host}:{daemon_port}.\n"
+            "  - Is the robot powered on and on the same network as this machine?\n"
+            "  - Is the daemon running on the robot (reachy-mini-daemon --wireless-version)?\n"
+            "  - If the hostname doesn't resolve, pass the robot's IP: --robot-host 192.168.x.y"
         )
-        return True
+        return False
 
     for attempt in range(1, retries + 1):
         if daemon_reachable(port=daemon_port):

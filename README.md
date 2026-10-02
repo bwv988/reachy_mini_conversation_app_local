@@ -136,11 +136,17 @@ motors over the RPi UART). On the robot:
 reachy-mini-daemon --wireless-version
 ```
 
-Then, from your computer on the same network:
+The robot's CM4 is too slow to run speech recognition and synthesis itself
+(about a minute per turn). Run the app on your computer instead, on the same
+network. The robot's mic and speaker stream to it over WebRTC:
 
 ```bash
-reachy-mini-conversation-app --wireless-version
+reachy-mini-conversation-app --wireless-version --robot-host 192.168.x.y --no-camera
 ```
+
+`--robot-host` defaults to `reachy-mini.local`; use the robot's IP if mDNS
+doesn't resolve on your network. To run the app on the robot itself anyway,
+use `--wireless-version --on-device`.
 
 #### Preflight checks
 
@@ -163,10 +169,15 @@ The app auto-configures for your hardware. Key settings in `.env`:
 |----------|---------|-------------|
 | `LLM_PROVIDER` | `ollama` | LLM backend (`ollama` or `lmstudio`) |
 | `OLLAMA_MODEL` | `phi-3-mini-4k-instruct` | Ollama model name |
-| `DISTIL_WHISPER_MODEL` | `distil-small.en` | Speech recognition model |
-| `KOKORO_VOICE` | `af_sarah` | TTS voice (af_sarah, am_michael, etc.) |
+| `DISTIL_WHISPER_MODEL` | `distil-small.en` | Any Whisper checkpoint on the Hugging Face hub, e.g. `distil-whisper/distil-medium.en`, `distil-whisper/distil-large-v3` (best; <1 s per utterance on an M4, uses the Apple GPU automatically), `openai/whisper-large-v3-turbo` |
+| `WHISPER_LANGUAGE` | `en` | Language for multilingual models, or `auto` to detect it (`*.en` models are English-only) |
+| `KOKORO_VOICE` | `af_sarah` | TTS voice. Prefix = accent + gender (`a`=American, `b`=British; `f`/`m`), e.g. `af_heart`, `am_michael`, `bf_emma`, `bm_george` |
 | `VAD_ENERGY_THRESHOLD` | `0.01` | Mic loudness that counts as speech (raise it if fan/motor noise triggers turns) |
 | `MIC_UNMUTE_DELAY` | `0.6` | Seconds the mic stays muted after the robot stops speaking |
+| `WAKE_MODE` | `off` | `name`: only answer when addressed by name (see below); `off`: answer everything |
+| `WAKE_WORDS` | | Comma-separated names/phrases, e.g. `tom` or `tom,hey tom` |
+| `WAKE_WINDOW_S` | `25` | Seconds a conversation stays active after the robot's last reply |
+| `IDLE_BREATHING` | `false` | Idle head/antenna "breathing" animation (its motor noise can trigger the VAD) |
 | `JETSON_OPTIMIZE` | `true` | Enable Jetson-specific optimizations |
 
 See `.env.jetson` for Jetson Nano optimized settings.
@@ -179,7 +190,9 @@ See `.env.jetson` for Jetson Nano optimized settings.
 | `--head-tracker {yolo,mediapipe}` | Enable face tracking |
 | `--local-vision` | Use local vision model (requires `local_vision` extra) |
 | `--no-camera` | Disable camera (audio-only mode) |
-| `--wireless-version` | Use GStreamer for wireless robots |
+| `--wireless-version` | Wireless robot: WebRTC media from another machine, or local GStreamer with `--on-device` |
+| `--robot-host HOST` | Wireless robot's hostname/IP (default `reachy-mini.local`) |
+| `--on-device` | The app runs on the robot itself |
 | `--debug` | Enable verbose logging |
 
 ## Optional Extras
@@ -201,7 +214,10 @@ pip install -e ".[dev]"  # Testing & linting tools
 
 ## Available Tools
 
-The LLM has access to these robot actions:
+The LLM calls these through tool calling. With llama.cpp, start `llama-server`
+with `--jinja` (newer builds enable it by default). The tools a profile offers are
+listed in its `tools.txt`; `camera` is only offered when the camera is enabled
+(no `--no-camera`), and `head_tracking` only with `--head-tracker`.
 
 | Tool | Action |
 |------|--------|
@@ -213,6 +229,42 @@ The LLM has access to these robot actions:
 | `play_emotion` | Display emotion animation |
 | `stop_emotion` | Stop emotion animation |
 | `do_nothing` | Remain idle |
+
+## Activation by Name
+
+With `WAKE_MODE=name` and `WAKE_WORDS=tom`, the robot only answers speech that
+contains its name ("Tom, what do you see?", "What do you think, Tom?"). After it
+replies, a conversation stays active for `WAKE_WINDOW_S` seconds, so follow-ups
+don't need the name; each reply restarts the window.
+
+- Matching works on the transcript: whole words only ("tomorrow" doesn't count).
+  Names of 5+ letters also accept close misspellings; list ASR variants as extra
+  `WAKE_WORDS` if needed.
+- Every transcript is logged with the verdict, e.g. `Heard (ignored, no wake word): …`,
+  `Heard (wake word 'tom'): …`, `Heard (conversation active): …`.
+- Pick a name Whisper spells reliably: common names work well; "Reachy" is often
+  misheard ("Reiki", "Riki").
+
+## Camera / Vision
+
+The `camera` tool grabs the latest frame (downscaled to 640 px wide) and sends it
+to the LLM as an image, so the LLM itself must accept images:
+
+1. Use a vision-capable model and load its projector. For llama.cpp, download only
+   the `mmproj` file next to your model, then pass it to `llama-server`:
+
+   ```bash
+   hf download unsloth/Qwen3.8-27B-GGUF mmproj-F16.gguf --local-dir <model dir>
+   llama-server --model <model dir>/<model>.gguf --mmproj <model dir>/mmproj-F16.gguf --jinja ...
+   ```
+
+   Check with `curl -s http://<llm-host>:8085/props | grep -o '"vision":[a-z]*'`
+   (it should print `"vision":true`).
+2. Run the app without `--no-camera`, then ask things like "What do you see?"
+
+If the server has no vision support, the robot says it can't see right now and
+the log suggests `--mmproj`. For a local alternative that doesn't need a
+multimodal LLM, see `--local-vision` (SmolVLM2, `pip install -e ".[local_vision]"`).
 
 ## Custom Personalities
 
@@ -258,6 +310,14 @@ See `profiles/example/` for reference.
 - Turn-taking is half-duplex: the mic is ignored while a reply is generated
   and while the robot speaks. If the tail of its voice still triggers a turn,
   increase `MIC_UNMUTE_DELAY` (e.g. `1.0`) or `VAD_ENERGY_THRESHOLD`.
+
+**The robot keeps reacting to its own motors / background noise:**
+- Keep `IDLE_BREATHING=false` and raise `VAD_ENERGY_THRESHOLD` (e.g. `0.02`–`0.05`).
+
+**HuggingFace requests at every startup:** these check that the cached models are
+current; they don't re-download them. Once the models are cached, set
+`HF_HUB_OFFLINE=1` in `.env` to run fully offline (set it back to `0` once to
+download a new model).
 
 **No audio output:**
 - Check TTS voice is valid: `af_sarah`, `am_michael`, `bf_emma`, `bm_lewis`

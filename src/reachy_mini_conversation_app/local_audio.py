@@ -2,7 +2,7 @@
 
 This module provides built-in local alternatives to cloud services:
 - VAD: Energy-based voice activity detection
-- ASR: Distil-Whisper for speech-to-text (lightweight, edge-optimized)
+- ASR: Whisper (distil-whisper by default) for speech-to-text, via transformers
 - TTS: Kokoro-82M for text-to-speech (lightweight, edge-optimized)
 """
 
@@ -10,7 +10,7 @@ import re
 import asyncio
 import logging
 from math import gcd
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 from scipy.signal import resample_poly
@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_SAMPLE_RATE = 24000
 # Sample rate Whisper models are trained on
 WHISPER_SAMPLE_RATE = 16000
+# Whisper's native window; longer audio uses long-form decoding
+WHISPER_MAX_SHORT_FORM_S = 30
 
 
 def clean_text_for_speech(text: str) -> str:
@@ -149,8 +151,54 @@ class LocalVAD:
         return speech_started, speech_ended
 
 
+def resolve_asr_device(device: str = "auto", dtype: str = "auto") -> tuple[str, str]:
+    """Pick the Whisper device and dtype.
+
+    ``auto`` prefers CUDA, then Apple Silicon (MPS), then CPU. float16 is only used
+    on CUDA: Whisper on MPS in float16 produces garbage transcripts, so MPS always
+    runs float32 (still faster than CPU on an M4: ~1.1 s vs ~1.5 s for 5 s of speech
+    with distil-large-v3).
+    """
+    if device == "auto":
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+        except ImportError:
+            device = "cpu"
+
+    if dtype == "auto" or (device == "mps" and dtype == "float16"):
+        dtype = "float16" if device == "cuda" else "float32"
+
+    return device, dtype
+
+
+class _DropWhisperSuppressTokensWarning(logging.Filter):
+    """Drop a warning transformers' own Whisper generate() triggers on every call.
+
+    WhisperGenerationMixin moves suppress_tokens into logits processors and clears them on
+    its generation config copy; the generic generate() then sees the difference and warns
+    about "passing generation_config together with generation-related arguments". Nothing
+    on our side causes it, so only this exact message is filtered.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not ("together with generation-related arguments" in message and "suppress_tokens" in message)
+
+
 class LocalASR:
-    """Local Automatic Speech Recognition using distil-whisper (lightweight for edge devices)."""
+    """Local speech recognition with a Whisper model, loaded directly through transformers.
+
+    Works with any Whisper checkpoint on the Hugging Face hub: the distil-whisper
+    family (``distil-whisper/distil-small.en``, ``distil-medium.en``, ``distil-large-v3``)
+    or OpenAI's (e.g. ``openai/whisper-large-v3-turbo``).
+    """
 
     def __init__(
         self,
@@ -162,61 +210,73 @@ class LocalASR:
         """Initialize the ASR.
 
         Args:
-            model_name: Distil-Whisper model (distil-small.en, distil-medium.en, distil-large-v3)
-            device: Device to use (auto, cpu, cuda)
+            model_name: Hugging Face id of a Whisper checkpoint
+            device: Device to use (auto, cpu, cuda, mps)
             dtype: Data type (auto, float16, float32)
-            language: Language code for transcription
+            language: Language code for multilingual models ("en", "fr", ...), or "auto" to
+                detect it. English-only (``*.en``) models ignore it.
 
         """
         self.model_name = model_name
         self.device = device
         self.dtype = dtype
         self.language = language
-        self._model = None
+        self._model: Any = None
+        self._processor: Any = None
+        self._torch_dtype: Any = None
         self._initialized = False
 
+    @property
+    def _english_only(self) -> bool:
+        return self.model_name.endswith(".en")
+
     def _ensure_initialized(self) -> bool:
-        """Lazy-load the distil-whisper model."""
+        """Lazy-load the Whisper model and processor."""
         if self._initialized:
             return self._model is not None
 
         self._initialized = True
 
         try:
-            from distil_whisper_fastrtc import DistilWhisperSTT
+            import torch
+            from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 
-            # Determine device
-            device = self.device
-            dtype = self.dtype
+            device, dtype = resolve_asr_device(self.device, self.dtype)
+            self.device = device
+            self._torch_dtype = torch.float16 if dtype == "float16" else torch.float32
 
-            if device == "auto":
-                try:
-                    import torch
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                except ImportError:
-                    device = "cpu"
+            logging.getLogger("transformers.generation.utils").addFilter(_DropWhisperSuppressTokensWarning())
 
-            if dtype == "auto":
-                dtype = "float16" if device == "cuda" else "float32"
+            logger.info("Loading Whisper model '%s' on %s with %s...", self.model_name, device, dtype)
+            self._processor = AutoProcessor.from_pretrained(self.model_name)
+            self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                self.model_name, dtype=self._torch_dtype, low_cpu_mem_usage=True
+            ).to(device)
+            self._model.eval()
+            # Older checkpoints (distil-whisper) also carry generation settings in the *model*
+            # config (forced_decoder_ids, suppress tokens), which transformers 5 flags as
+            # deprecated on every call. The generation config holds the same values, so drop
+            # the stale copies and let it be the single source.
+            for attr in ("forced_decoder_ids", "suppress_tokens", "begin_suppress_tokens"):
+                if getattr(self._model.config, attr, None) is not None:
+                    setattr(self._model.config, attr, None)
 
-            logger.info("Loading Distil-Whisper model '%s' on %s with %s...",
-                       self.model_name, device, dtype)
-
-            self._model = DistilWhisperSTT(
-                model=self.model_name,
-                device=device,
-                dtype=dtype,
-            )
-
-            logger.info("Distil-Whisper model loaded successfully")
+            logger.info("Whisper model loaded successfully")
             return True
 
-        except ImportError:
-            logger.error("distil-whisper-fastrtc not installed. Install with: pip install distil-whisper-fastrtc")
-            return False
         except Exception as e:
-            logger.error("Failed to load Distil-Whisper model: %s", e)
+            logger.error("Failed to load Whisper model '%s': %s", self.model_name, e)
+            self._model = None
             return False
+
+    def _generate_kwargs(self) -> dict[str, Any]:
+        """Language/task arguments for generate(); English-only models take none."""
+        if self._english_only:
+            return {}
+        kwargs: dict[str, Any] = {"task": "transcribe"}
+        if self.language and self.language.lower() != "auto":
+            kwargs["language"] = self.language
+        return kwargs
 
     async def transcribe(self, audio_data: bytes, sample_rate: int = 24000) -> Optional[str]:
         """Transcribe audio to text.
@@ -233,17 +293,9 @@ class LocalASR:
             return None
 
         try:
-            # Convert bytes to numpy array (int16)
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
-
-            # Run transcription in executor to not block
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, self._transcribe_array, sample_rate, audio_array
-            )
-
-            return result
-
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self._transcribe_array, sample_rate, audio_array)
         except Exception as e:
             logger.error("ASR transcription failed: %s", e)
             return None
@@ -251,24 +303,48 @@ class LocalASR:
     def _transcribe_array(self, sample_rate: int, audio_array: np.ndarray) -> Optional[str]:
         """Transcribe an audio array (runs in executor)."""
         try:
-            # Whisper expects 16 kHz. Resample here: the transformers pipeline would
-            # otherwise need torchaudio to do it.
+            import torch
+
+            # Whisper expects float32 at 16 kHz; resample with scipy (the transformers
+            # pipeline would need torchaudio for this).
             audio = audio_array.astype(np.float32) / 32768.0 if audio_array.dtype == np.int16 else audio_array
             if sample_rate != WHISPER_SAMPLE_RATE:
                 g = gcd(sample_rate, WHISPER_SAMPLE_RATE)
                 audio = resample_poly(audio, WHISPER_SAMPLE_RATE // g, sample_rate // g).astype(np.float32)
 
-            text = self._model.stt((WHISPER_SAMPLE_RATE, audio))
+            long_form = len(audio) > WHISPER_MAX_SHORT_FORM_S * WHISPER_SAMPLE_RATE
+            if long_form:
+                # > 30 s: keep all audio and let generate() do Whisper's sequential long-form decoding
+                inputs = self._processor(
+                    audio,
+                    sampling_rate=WHISPER_SAMPLE_RATE,
+                    return_tensors="pt",
+                    truncation=False,
+                    padding="longest",
+                    return_attention_mask=True,
+                )
+            else:
+                inputs = self._processor(audio, sampling_rate=WHISPER_SAMPLE_RATE, return_tensors="pt")
 
-            if text and text.strip():
-                text = text.strip()
+            features = inputs.input_features.to(self.device, dtype=self._torch_dtype)
+            gen_kwargs = self._generate_kwargs()
+            if long_form:
+                # Long-form decoding chains 30 s windows and needs timestamps to do so
+                gen_kwargs["attention_mask"] = inputs.attention_mask.to(self.device)
+                gen_kwargs["return_timestamps"] = True
+
+            with torch.inference_mode():
+                ids = self._model.generate(features, **gen_kwargs)
+            text = self._processor.batch_decode(ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+
+            text = text.strip()
+            if text:
                 logger.info("ASR transcription: %s", text[:100])
                 return text
-
             return None
 
         except Exception as e:
-            logger.error("Distil-Whisper transcription error: %s", e)
+            logger.error("Whisper transcription error: %s", e)
             return None
 
 

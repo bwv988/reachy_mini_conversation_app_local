@@ -27,7 +27,6 @@ dependencies = [
     "eclipse-zenoh~=1.7.0",
 
     #Local Audio (Always included for fully local operation)
-    "distil-whisper-fastrtc",
     "torch",
     "transformers",
     "accelerate",

@@ -745,22 +745,6 @@ wheels = [
 ]
 
 [[package]]
-name = "distil-whisper-fastrtc"
-version = "0.1.0.post1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "accelerate" },
-    { name = "click" },
-    { name = "numpy" },
-    { name = "torch" },
-    { name = "transformers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/44/9e/ffc49c654c0a8baa1eb345816c4a1b515fab09329242cc1cffd7386b2a85/distil_whisper_fastrtc-0.1.0.post1.tar.gz", hash = "sha256:03397d6404c530f6f086a9b2fc751a4d42f0c0427fa6ac78cc80dfc7113963b9", size = 6936, upload-time = "2025-03-10T18:03:14.253Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/42/a9/6a15945ba1cfbc2801dedbd2765aba301938324aa733e5fda0e734cb6ae3/distil_whisper_fastrtc-0.1.0.post1-py3-none-any.whl", hash = "sha256:619f14ee4e1376ebd63477f07333050320bc2f982afeb4bcc5f071932b38cf13", size = 6722, upload-time = "2025-03-10T18:03:12.949Z" },
-]
-
-[[package]]
 name = "distlib"
 version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3703,7 +3687,6 @@ source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
     { name = "aiortc" },
-    { name = "distil-whisper-fastrtc" },
     { name = "eclipse-zenoh" },
     { name = "fastrtc", extra = ["tts"] },
     { name = "gradio" },
@@ -3762,7 +3745,6 @@ dev = [
 requires-dist = [
     { name = "accelerate" },
     { name = "aiortc", specifier = ">=1.13.0" },
-    { name = "distil-whisper-fastrtc" },
     { name = "eclipse-zenoh", specifier = "~=1.7.0" },
     { name = "fastrtc", extras = ["tts"], specifier = ">=0.0.34" },
     { name = "gradio", specifier = "==5.23.1" },

@@ -73,11 +73,16 @@ def run(
         #   3. Reachy Mini daemon on local network (same subnet)
 
         if args.wireless_version and not args.on_device:
-            logger.info("Using WebRTC backend for fully remote wireless version")
-            robot = ReachyMini(media_backend="webrtc", localhost_only=False, timeout=ROBOT_CONNECTION_TIMEOUT_S)
+            logger.info(f"Using WebRTC backend for remote wireless robot at {args.robot_host}")
+            robot = ReachyMini(
+                host=args.robot_host,
+                connection_mode="network",
+                media_backend="webrtc",
+                timeout=ROBOT_CONNECTION_TIMEOUT_S,
+            )
         elif args.wireless_version and args.on_device:
-            logger.info("Using GStreamer backend for on-device wireless version")
-            robot = ReachyMini(media_backend="gstreamer", timeout=ROBOT_CONNECTION_TIMEOUT_S)
+            logger.info("Using local GStreamer backend for on-device wireless version")
+            robot = ReachyMini(media_backend="local", timeout=ROBOT_CONNECTION_TIMEOUT_S)
         else:
             logger.info("Using default backend for lite version")
             robot = ReachyMini(media_backend="default", timeout=ROBOT_CONNECTION_TIMEOUT_S)

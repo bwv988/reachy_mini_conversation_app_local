@@ -114,6 +114,28 @@ class Config:
     MIC_UNMUTE_DELAY = float(os.getenv("MIC_UNMUTE_DELAY", "0.6"))
 
     # =========================================================================
+    # MOTION
+    # =========================================================================
+    # Idle "breathing" animation (gentle head bob + antenna sway whenever the robot
+    # is idle). Off by default: on the real robot the motor noise is loud enough to
+    # trigger the energy-based VAD, so the robot ends up answering its own motors.
+    IDLE_BREATHING = os.getenv("IDLE_BREATHING", "false").lower().strip() in ("true", "1", "yes")
+
+    # =========================================================================
+    # ACTIVATION BY NAME
+    # =========================================================================
+    # WAKE_MODE=name: only answer utterances containing one of WAKE_WORDS (comma-separated,
+    # e.g. "tom,hey tom"), plus follow-ups within WAKE_WINDOW_S seconds of the robot's last
+    # reply. WAKE_MODE=off answers everything. Every transcript is logged either way.
+    WAKE_MODE = os.getenv("WAKE_MODE", "off").lower().strip()
+    WAKE_WORDS = [w.strip() for w in os.getenv("WAKE_WORDS", "").split(",") if w.strip()]
+    WAKE_WINDOW_S = float(os.getenv("WAKE_WINDOW_S", "25"))
+    if WAKE_MODE == "name" and not WAKE_WORDS:
+        logger.warning("WAKE_MODE=name but WAKE_WORDS is empty; activation by name is disabled")
+    elif WAKE_MODE not in ("off", "name"):
+        logger.warning(f"Unknown WAKE_MODE '{WAKE_MODE}'. Valid options: 'off', 'name'")
+
+    # =========================================================================
     # SYSTEM STATUS LOGGING
     # =========================================================================
     logger.info("=" * 60)

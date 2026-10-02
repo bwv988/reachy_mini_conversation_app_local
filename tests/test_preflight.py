@@ -32,10 +32,23 @@ class _Handler(BaseHTTPRequestHandler):
         """Silence request logging."""
 
 
-def test_wireless_remote_mode_skips_local_daemon_check() -> None:
-    """Remote wireless mode expects the daemon on the robot, not localhost."""
-    args = argparse.Namespace(wireless_version=True, on_device=False)
-    assert preflight_check(args, logging.getLogger("test"), retries=1, daemon_port=_free_port()) is True
+def test_wireless_remote_mode_checks_robot_host() -> None:
+    """Remote wireless mode checks the daemon at --robot-host, not localhost."""
+    port = _free_port()
+    server = HTTPServer(("127.0.0.1", port), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        args = argparse.Namespace(wireless_version=True, on_device=False, robot_host="127.0.0.1")
+        assert preflight_check(args, logging.getLogger("test"), retries=1, daemon_port=port) is True
+    finally:
+        server.shutdown()
+
+
+def test_wireless_remote_mode_unreachable_robot_returns_false() -> None:
+    """An unreachable robot host fails preflight with guidance instead of hanging in the SDK."""
+    args = argparse.Namespace(wireless_version=True, on_device=False, robot_host="127.0.0.1")
+    assert preflight_check(args, logging.getLogger("test"), retries=1, daemon_port=_free_port()) is False
 
 
 def test_unreachable_daemon_returns_false() -> None:
